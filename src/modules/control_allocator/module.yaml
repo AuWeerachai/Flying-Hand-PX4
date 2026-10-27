@@ -15,6 +15,9 @@ parameters:
                   Some are generic, while others are specifically fit to a certain vehicle with a fixed set of actuators.
 
                   'Custom' should only be used if noting else can be used.
+
+                  Motors (6DOF) uses underwater motor-stop behavior near zero thrust.
+                  Multirotor (6DOF) keeps armed motor idle for aerial vehicles.
             type: enum
             values:
                 0: Multirotor
@@ -33,6 +36,7 @@ parameters:
                 13: Rover (Mecanum)
                 14: Spacecraft 2D
                 15: Spacecraft 3D
+                16: Multirotor (6DOF)
             default: 0
 
         CA_METHOD:
@@ -1017,7 +1021,7 @@ mixer:
                       - name: 'Left Motor'
                         position: [ 0, -1, 0 ]
 
-            7: # Motors (6DOF)
+            7: &motors_6dof # Motors (6DOF)
                 actuators:
                   - actuator_type: 'motor'
                     count: 'CA_ROTOR_COUNT'
@@ -1036,6 +1040,8 @@ mixer:
                             function: 'axisz'
                           - name: 'CA_ROTOR${i}_KM'
                             label: "Moment\nCoefficient"
+
+            16: *motors_6dof # Multirotor (6DOF), same geometry editor
 
             8: # Multirotor with Tilt
                 title: 'Multirotor with Tilt'

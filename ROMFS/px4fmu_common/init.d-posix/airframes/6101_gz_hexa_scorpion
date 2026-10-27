@@ -21,7 +21,7 @@ param set-default MAV_TYPE 13
 param set-default SIM_GZ_EN 1
 
 # Use 6DOF Motors control allocation for fully-actuated vehicle
-param set-default CA_AIRFRAME 7
+param set-default CA_AIRFRAME 16
 
 param set-default CA_ROTOR_COUNT 6
 

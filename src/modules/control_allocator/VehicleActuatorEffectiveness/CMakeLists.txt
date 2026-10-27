@@ -1,6 +1,7 @@
 px4_add_library(VehicleActuatorEffectiveness
 	ActuatorEffectivenessUUV.cpp
 	ActuatorEffectivenessUUV.hpp
+	ActuatorEffectivenessMultirotor6Dof.hpp
 	ActuatorEffectivenessControlSurfaces.cpp
 	ActuatorEffectivenessControlSurfaces.hpp
 	ActuatorEffectivenessCustom.cpp
@@ -41,3 +42,4 @@ target_link_libraries(VehicleActuatorEffectiveness
 
 px4_add_functional_gtest(SRC ActuatorEffectivenessHelicopterTest.cpp LINKLIBS VehicleActuatorEffectiveness)
 px4_add_functional_gtest(SRC ActuatorEffectivenessRotorsTest.cpp LINKLIBS VehicleActuatorEffectiveness)
+px4_add_functional_gtest(SRC ActuatorEffectivenessMultirotor6DofTest.cpp LINKLIBS VehicleActuatorEffectiveness)
