@@ -37,7 +37,6 @@
 
 #include "ControlMath.hpp"
 #include <px4_platform_common/defines.h>
-#include <px4_platform_common/log.h>
 #include <float.h>
 #include <mathlib/mathlib.h>
 
@@ -57,10 +56,6 @@ void thrustToOmniAttitude(const Vector3f &thr_sp, const float yaw_sp, const matr
 			  const float omni_att_rate, int omni_proj_axes,
 			  vehicle_attitude_setpoint_s &att_sp, omni_attitude_status_s &omni_status)
 {
-	if (omni_att_mode > 6 || omni_att_mode < 0) {
-		PX4_ERR("OMNI_ATT_MODE parameter set to unknown value!");
-	}
-
 	switch (omni_att_mode) {
 	case 1: // Min-tilt attitude
 		thrustToMinTiltAttitude(thr_sp, yaw_sp, omni_dfc_max_thrust, att, omni_proj_axes, att_sp);
@@ -354,11 +349,21 @@ void thrustToSlowAttitude(const matrix::Vector3f &thr_sp, const float yaw_sp, co
 		curr_z(i) = R_body(i, 2);
 	}
 
-	// Rodrigues' rotation formula: rotate current z toward desired z at tilt_rate
-	Vector3f p_hat = curr_z % des_z;
-	p_hat.normalize();
-	Vector3f cmd_z = -(1 - cosf(tilt_rate)) * p_hat * (p_hat.dot(curr_z)) + cosf(tilt_rate) * curr_z - sinf(tilt_rate) *
-			 (curr_z % p_hat);
+	// The shortest-rotation quaternion handles parallel and antiparallel axes.
+	// With no thrust direction, keep the current tilt. Never step past the target.
+	Vector3f cmd_z = curr_z;
+
+	if (des_z.norm_squared() > FLT_EPSILON) {
+		AxisAnglef rotation{Quatf(curr_z, des_z)};
+		const float angle = rotation.norm();
+		const float step = math::max(tilt_rate, 0.f);
+
+		if (angle > step) {
+			rotation *= step / angle;
+		}
+
+		cmd_z = Dcmf(Quatf(rotation)) * curr_z;
+	}
 
 	bodyzToAttitude(cmd_z, yaw_sp, att_sp);
 

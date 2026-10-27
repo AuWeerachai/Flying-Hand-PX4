@@ -40,6 +40,54 @@
 using namespace matrix;
 using namespace ControlMath;
 
+TEST(ControlMathTest, OmniSlowAttitudeAlignedAndZeroThrust)
+{
+	for (const Vector3f &thrust : {Vector3f(0.f, 0.f, -.5f), Vector3f()}) {
+		vehicle_attitude_setpoint_s output{};
+		thrustToSlowAttitude(thrust, .3f, Quatf(), .01f, 1, output);
+		const Quatf q(output.q_d);
+		ASSERT_TRUE(q.isAllFinite());
+		EXPECT_NEAR(q.norm(), 1.f, 1e-6f);
+		EXPECT_NEAR(Eulerf(q).theta(), 0.f, 1e-6f);
+		EXPECT_NEAR(Eulerf(q).phi(), 0.f, 1e-6f);
+		EXPECT_NEAR(Eulerf(q).psi(), .3f, 1e-6f);
+		EXPECT_EQ(Vector3f(output.thrust_body), thrust);
+	}
+}
+
+TEST(ControlMathTest, OmniSlowAttitudeAntiparallel)
+{
+	vehicle_attitude_setpoint_s output{};
+	const float step = .1f;
+	thrustToSlowAttitude(Vector3f(0.f, 0.f, .5f), 0.f, Quatf(), step, 1, output);
+	const Quatf q(output.q_d);
+	ASSERT_TRUE(q.isAllFinite());
+	EXPECT_NEAR(q.norm(), 1.f, 1e-6f);
+	EXPECT_NEAR(acosf(q.dcm_z()(2)), step, 1e-5f);
+}
+
+TEST(ControlMathTest, OmniSlowAttitudeDoesNotOvershoot)
+{
+	const Vector3f target_z = Dcmf(Eulerf(.001f, 0.f, 0.f)).col(2);
+	vehicle_attitude_setpoint_s output{};
+	thrustToSlowAttitude(-.5f * target_z, 0.f, Quatf(), .01f, 0, output);
+	const Quatf q(output.q_d);
+	ASSERT_TRUE(q.isAllFinite());
+	EXPECT_NEAR((q.dcm_z() - target_z).norm(), 0.f, 1e-6f);
+}
+
+TEST(ControlMathTest, OmniSlowAttitudeLimitsStep)
+{
+	vehicle_attitude_setpoint_s output{};
+	thrustToSlowAttitude(Vector3f(-.5f, 0.f, -.5f), 0.f, Quatf(), .1f, 0, output);
+	const Quatf q(output.q_d);
+	ASSERT_TRUE(q.isAllFinite());
+	EXPECT_NEAR(acosf(q.dcm_z()(2)), .1f, 1e-5f);
+	EXPECT_GT(q.dcm_z()(0), 0.f);
+	thrustToSlowAttitude(Vector3f(-.5f, 0.f, -.5f), 0.f, Quatf(), 0.f, 0, output);
+	EXPECT_NEAR((Quatf(output.q_d).dcm_z() - Vector3f(0.f, 0.f, 1.f)).norm(), 0.f, 1e-6f);
+}
+
 TEST(ControlMathTest, LimitTiltUnchanged)
 {
 	Vector3f body = Vector3f(0.f, 0.f, 1.f).normalized();
