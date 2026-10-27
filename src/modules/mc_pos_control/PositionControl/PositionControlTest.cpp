@@ -99,6 +99,92 @@ public:
 	static constexpr float HORIZONTAL_THRUST_MARGIN = 0.3f;
 };
 
+class PositionControlOmniTest : public PositionControlBasicTest
+{
+public:
+	PositionControlOmniTest()
+	{
+		_position_control.setOmniMode(2);
+		_position_control.setOmniDfcMaxThrust(.2f);
+		_position_control.setOmniProjAxes(1);
+		_position_control.setCurrentAttitude(Quatf());
+		_input_setpoint.yaw = 0.f;
+	}
+
+	void runAcceleration(const Vector3f &acceleration)
+	{
+		acceleration.copyTo(_input_setpoint.acceleration);
+		ASSERT_TRUE(runController());
+		omni_attitude_status_s status{};
+		_position_control.getOmniAttitudeSetpoint(_attitude, status);
+		ASSERT_TRUE(Quatf(_attitude.q_d).isAllFinite());
+		ASSERT_TRUE(Vector3f(_attitude.thrust_body).isAllFinite());
+	}
+};
+
+TEST_F(PositionControlOmniTest, PublishedThrustHonorsVerticalLimits)
+{
+	for (const float acceleration : {-100.f, -20.f, 0.f, 20.f, 100.f}) {
+		runAcceleration(Vector3f(0.f, 0.f, acceleration));
+		EXPECT_GE(_attitude.thrust_body[2], -MAXIMUM_THRUST);
+		EXPECT_LE(_attitude.thrust_body[2], -.1f);
+		EXPECT_EQ(Vector3f(_attitude.thrust_body), Vector3f(_output_setpoint.thrust));
+	}
+}
+
+TEST_F(PositionControlOmniTest, ReducedMaximumAndGroundSuppression)
+{
+	_position_control.setThrustLimits(.05f, .1f); // less than the horizontal margin
+	for (const Vector3f &acceleration : {Vector3f(), Vector3f(20.f, 20.f, -20.f)}) {
+		runAcceleration(acceleration);
+		EXPECT_LE(Vector3f(_attitude.thrust_body).norm(), .10001f);
+		EXPECT_LE(_attitude.thrust_body[2], -.05f + 1e-6f);
+	}
+
+	_position_control.setThrustLimits(0.f, MAXIMUM_THRUST);
+	runAcceleration(Vector3f(0.f, 0.f, 100.f));
+	EXPECT_LE(_attitude.thrust_body[2], 0.f);
+	EXPECT_GE(_attitude.thrust_body[2], -.00101f);
+}
+
+TEST_F(PositionControlOmniTest, HorizontalAndTotalThrustEnvelope)
+{
+	for (const float z : {-20.f, 0.f, 20.f}) {
+		runAcceleration(Vector3f(20.f, -20.f, z));
+		const Vector3f thrust(_attitude.thrust_body);
+		EXPECT_LE(Vector2f(thrust).norm(), .20001f);
+		EXPECT_LE(thrust.norm(), MAXIMUM_THRUST + 1e-5f);
+		EXPECT_NEAR(thrust(0), -thrust(1), 1e-6f);
+	}
+}
+
+TEST_F(PositionControlOmniTest, CurrentAttitudeProjectionPreservesLimitedNedThrust)
+{
+	const Quatf attitude(Eulerf(.3f, -.2f, .7f));
+	_position_control.setCurrentAttitude(attitude);
+	runAcceleration(Vector3f(20.f, -20.f, -20.f));
+	const Vector3f projected = Dcmf(attitude) * Vector3f(_attitude.thrust_body);
+	EXPECT_NEAR((projected - Vector3f(_output_setpoint.thrust)).norm(), 0.f, 1e-6f);
+	EXPECT_LE(Vector3f(_attitude.thrust_body).norm(), MAXIMUM_THRUST + 1e-5f);
+}
+
+TEST_F(PositionControlOmniTest, HorizontalAntiWindupUsesLimitedOutput)
+{
+	_position_control.setVelocityGains(Vector3f(2.f, 2.f, 9.f), Vector3f(.4f, .4f, 2.2f), Vector3f());
+	_position_control.setState(PositionControlStates{});
+	Vector3f(1.f, 0.f, 0.f).copyTo(_input_setpoint.velocity);
+	_position_control.setOmniDfcMaxThrust(.05f);
+
+	for (int i = 0; i < 10000; ++i) {
+		_position_control.setInputSetpoint(_input_setpoint);
+		ASSERT_TRUE(_position_control.update(.01f));
+	}
+
+	_position_control.getLocalPositionSetpoint(_output_setpoint);
+	EXPECT_LE(_output_setpoint.thrust[0], .05001f);
+	EXPECT_LT(_output_setpoint.acceleration[0], 3.f); // no unbounded integral during saturation
+}
+
 class PositionControlBasicDirectionTest : public PositionControlBasicTest
 {
 public:
