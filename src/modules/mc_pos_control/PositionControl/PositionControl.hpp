@@ -191,8 +191,9 @@ public:
 	 * Uses the selected omni attitude mode to convert thrust to attitude + body-frame thrust.
 	 * @param attitude_setpoint reference to struct to fill up
 	 * @param omni_status reference to omni attitude status struct to fill up
+	 * @return true for valid omni output; false when a bounded conventional fallback was used
 	 */
-	void getOmniAttitudeSetpoint(vehicle_attitude_setpoint_s &attitude_setpoint,
+	bool getOmniAttitudeSetpoint(vehicle_attitude_setpoint_s &attitude_setpoint,
 				     omni_attitude_status_s &omni_status);
 
 	/**

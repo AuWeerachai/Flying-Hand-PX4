@@ -288,21 +288,68 @@ void PositionControl::getAttitudeSetpoint(vehicle_attitude_setpoint_s &attitude_
 	attitude_setpoint.yaw_sp_move_rate = _yawspeed_sp;
 }
 
-void PositionControl::getOmniAttitudeSetpoint(vehicle_attitude_setpoint_s &attitude_setpoint,
+bool PositionControl::getOmniAttitudeSetpoint(vehicle_attitude_setpoint_s &attitude_setpoint,
 		omni_attitude_status_s &omni_status)
 {
+	// Prepare a finite conventional fallback before evaluating the omni path.
+	// Do not let a failed conversion turn NaN thrust into motor-stop commands.
+	attitude_setpoint = {};
+	omni_status = {};
+	const float max_thrust = PX4_ISFINITE(_lim_thr_max) ? math::constrain(_lim_thr_max, .001f, 1.f) : .5f;
+	Vector3f fallback_thrust = _thr_sp;
+
+	if (!fallback_thrust.isAllFinite() || !PX4_ISFINITE(fallback_thrust.norm()) || fallback_thrust(2) >= 0.f) {
+		const float hover_thrust = PX4_ISFINITE(_hover_thrust)
+					   ? math::constrain(_hover_thrust, .001f, max_thrust) : max_thrust;
+		fallback_thrust = Vector3f(0.f, 0.f, -hover_thrust);
+	}
+
+	if (fallback_thrust.norm() > max_thrust) {
+		fallback_thrust *= max_thrust / fallback_thrust.norm();
+	}
+
+	ControlMath::thrustToAttitude(fallback_thrust, PX4_ISFINITE(_yaw_sp) ? _yaw_sp : 0.f, attitude_setpoint);
+	attitude_setpoint.yaw_sp_move_rate = PX4_ISFINITE(_yawspeed_sp) ? _yawspeed_sp : 0.f;
+
+	const float attitude_norm_squared = _att.norm_squared();
+
+	if (!_thr_sp.isAllFinite() || !PX4_ISFINITE(_yaw_sp) || !_att.isAllFinite()
+	    || attitude_norm_squared < .5f || attitude_norm_squared > 1.5f
+	    || _omni_att_mode < 1 || _omni_att_mode > 6 || _omni_proj_axes < 0 || _omni_proj_axes > 1
+	    || !PX4_ISFINITE(_omni_dfc_max_thrust) || !PX4_ISFINITE(_omni_att_tilt_angle)
+	    || !PX4_ISFINITE(_omni_att_tilt_dir) || !PX4_ISFINITE(_omni_att_roll)
+	    || !PX4_ISFINITE(_omni_att_pitch) || !PX4_ISFINITE(_omni_att_rate) || _omni_att_rate < 0.f) {
+		return false;
+	}
+
+	vehicle_attitude_setpoint_s candidate{};
+	omni_attitude_status_s candidate_status{};
+	const Quatf attitude = _att.normalized();
+
 	// Use omnidirectional attitude conversion
 	float tilt_angle = _omni_att_tilt_angle;
 	float tilt_dir = _omni_att_tilt_dir;
 	float roll = _omni_att_roll;
 	float pitch = _omni_att_pitch;
 
-	ControlMath::thrustToOmniAttitude(_thr_sp, _yaw_sp, _att,
+	ControlMath::thrustToOmniAttitude(_thr_sp, _yaw_sp, attitude,
 					  _omni_att_mode, _omni_dfc_max_thrust,
 					  tilt_angle, tilt_dir, roll, pitch,
 					  _omni_att_rate, _omni_proj_axes,
-					  attitude_setpoint, omni_status);
+					  candidate, candidate_status);
+
+	const Quatf q(candidate.q_d);
+	const Vector3f thrust(candidate.thrust_body);
+
+	if (!q.isAllFinite() || !thrust.isAllFinite() || fabsf(q.norm_squared() - 1.f) > .001f
+	    || thrust.norm() > max_thrust + 1e-4f || thrust(2) > 0.f) {
+		return false;
+	}
+
+	attitude_setpoint = candidate;
+	omni_status = candidate_status;
 
 	attitude_setpoint.yaw_sp_move_rate = _yawspeed_sp;
 	omni_status.att_mode = (float)_omni_att_mode;
+	return true;
 }

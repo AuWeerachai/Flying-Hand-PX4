@@ -617,14 +617,24 @@ void MulticopterPositionControl::Run()
 
 			if (_control.isOmniMode()) {
 				// Get current vehicle attitude for omni thrust projection
-				vehicle_attitude_s vehicle_attitude;
+				vehicle_attitude_s vehicle_attitude{};
+				const bool attitude_available = _vehicle_attitude_sub.copy(&vehicle_attitude);
+				const hrt_abstime attitude_now = hrt_absolute_time();
 
-				if (_vehicle_attitude_sub.update(&vehicle_attitude)) {
+				if (attitude_available && vehicle_attitude.timestamp != 0
+				    && vehicle_attitude.timestamp <= attitude_now && attitude_now - vehicle_attitude.timestamp < 500_ms) {
 					_control.setCurrentAttitude(matrix::Quatf(vehicle_attitude.q));
+
+				} else {
+					_control.setCurrentAttitude(matrix::Quatf(NAN, NAN, NAN, NAN));
 				}
 
 				omni_attitude_status_s omni_status{};
-				_control.getOmniAttitudeSetpoint(attitude_setpoint, omni_status);
+
+				if (!_control.getOmniAttitudeSetpoint(attitude_setpoint, omni_status) && now - _last_omni_warn > 2_s) {
+					PX4_WARN("Invalid omni input/output, using conventional thrust fallback");
+					_last_omni_warn = now;
+				}
 
 				omni_status.timestamp = hrt_absolute_time();
 				_omni_attitude_status_pub.publish(omni_status);

@@ -99,6 +99,9 @@ public:
 	static constexpr float HORIZONTAL_THRUST_MARGIN = 0.3f;
 };
 
+constexpr float PositionControlBasicTest::MAXIMUM_THRUST;
+constexpr float PositionControlBasicTest::HORIZONTAL_THRUST_MARGIN;
+
 class PositionControlOmniTest : public PositionControlBasicTest
 {
 public:
@@ -116,7 +119,7 @@ public:
 		acceleration.copyTo(_input_setpoint.acceleration);
 		ASSERT_TRUE(runController());
 		omni_attitude_status_s status{};
-		_position_control.getOmniAttitudeSetpoint(_attitude, status);
+		ASSERT_TRUE(_position_control.getOmniAttitudeSetpoint(_attitude, status));
 		ASSERT_TRUE(Quatf(_attitude.q_d).isAllFinite());
 		ASSERT_TRUE(Vector3f(_attitude.thrust_body).isAllFinite());
 	}
@@ -135,6 +138,7 @@ TEST_F(PositionControlOmniTest, PublishedThrustHonorsVerticalLimits)
 TEST_F(PositionControlOmniTest, ReducedMaximumAndGroundSuppression)
 {
 	_position_control.setThrustLimits(.05f, .1f); // less than the horizontal margin
+
 	for (const Vector3f &acceleration : {Vector3f(), Vector3f(20.f, 20.f, -20.f)}) {
 		runAcceleration(acceleration);
 		EXPECT_LE(Vector3f(_attitude.thrust_body).norm(), .10001f);
@@ -166,6 +170,55 @@ TEST_F(PositionControlOmniTest, CurrentAttitudeProjectionPreservesLimitedNedThru
 	const Vector3f projected = Dcmf(attitude) * Vector3f(_attitude.thrust_body);
 	EXPECT_NEAR((projected - Vector3f(_output_setpoint.thrust)).norm(), 0.f, 1e-6f);
 	EXPECT_LE(Vector3f(_attitude.thrust_body).norm(), MAXIMUM_THRUST + 1e-5f);
+}
+
+TEST_F(PositionControlOmniTest, InvalidAttitudeUsesFiniteConventionalFallback)
+{
+	runAcceleration(Vector3f(1.f, 0.f, 0.f));
+
+	for (const Quatf &attitude : {Quatf(NAN, 0.f, 0.f, 0.f), Quatf(0.f, 0.f, 0.f, 0.f), Quatf(2.f, 0.f, 0.f, 0.f)}) {
+		_position_control.setCurrentAttitude(attitude);
+		omni_attitude_status_s status{};
+		ASSERT_FALSE(_position_control.getOmniAttitudeSetpoint(_attitude, status));
+		EXPECT_TRUE(Quatf(_attitude.q_d).isAllFinite());
+		EXPECT_TRUE(Vector3f(_attitude.thrust_body).isAllFinite());
+		EXPECT_LE(Vector3f(_attitude.thrust_body).norm(), MAXIMUM_THRUST);
+		EXPECT_LT(_attitude.thrust_body[2], 0.f);
+		EXPECT_FLOAT_EQ(_attitude.thrust_body[0], 0.f);
+		EXPECT_FLOAT_EQ(_attitude.thrust_body[1], 0.f);
+		EXPECT_FLOAT_EQ(status.att_mode, 0.f);
+	}
+}
+
+TEST_F(PositionControlOmniTest, RejectsInvalidGeneratedAttitude)
+{
+	runAcceleration(Vector3f());
+	_position_control.setOmniMode(4);
+	_position_control.setOmniRoll(NAN);
+	omni_attitude_status_s status{};
+	ASSERT_FALSE(_position_control.getOmniAttitudeSetpoint(_attitude, status));
+	EXPECT_TRUE(Quatf(_attitude.q_d).isAllFinite());
+	EXPECT_FLOAT_EQ(_attitude.thrust_body[2], -.5f);
+	_position_control.setOmniRoll(0.f);
+	_position_control.setOmniMode(99);
+	EXPECT_FALSE(_position_control.getOmniAttitudeSetpoint(_attitude, status));
+}
+
+TEST_F(PositionControlOmniTest, NormalizesSmallAttitudeNormErrors)
+{
+	_position_control.setCurrentAttitude(Quatf(1.01f, 0.f, 0.f, 0.f));
+	runAcceleration(Vector3f(1.f, 0.f, 0.f));
+	EXPECT_NEAR((Vector3f(_attitude.thrust_body) - Vector3f(_output_setpoint.thrust)).norm(), 0.f, 1e-6f);
+}
+
+TEST_F(PositionControlOmniTest, RejectsReversedBodyThrust)
+{
+	runAcceleration(Vector3f());
+	_position_control.setCurrentAttitude(Quatf(Eulerf(M_PI_F, 0.f, 0.f)));
+	omni_attitude_status_s status{};
+	ASSERT_FALSE(_position_control.getOmniAttitudeSetpoint(_attitude, status));
+	EXPECT_TRUE(Quatf(_attitude.q_d).isAllFinite());
+	EXPECT_FLOAT_EQ(_attitude.thrust_body[2], -.5f);
 }
 
 TEST_F(PositionControlOmniTest, HorizontalAntiWindupUsesLimitedOutput)
