@@ -235,9 +235,14 @@ void Ekf::controlMagFusion(const imuSample &imu_sample)
 						// observation variance (rad**2)
 						const float R_DECL = sq(0.5f);
 
-						if ((_params.mag_declination_source & GeoDeclinationMask::USE_GEO_DECL)
-						    && PX4_ISFINITE(_wmm_declination_rad)
-						   ) {
+						if ((_params.mag_declination_source == 0) && PX4_ISFINITE(_params.mag_declination_deg)) {
+							// Explicit manual mode: zero is also a valid declination.
+							// Keep INIT mode restricted to magnetic-state updates.
+							fuseDeclination(math::radians(_params.mag_declination_deg), R_DECL, update_all_states);
+
+						} else if ((_params.mag_declination_source & GeoDeclinationMask::USE_GEO_DECL)
+							   && PX4_ISFINITE(_wmm_declination_rad)
+							  ) {
 							// using declination from the world magnetic model
 							fuseDeclination(_wmm_declination_rad, 0.5f, update_all_states);
 
@@ -387,7 +392,17 @@ void Ekf::resetMagStates(const Vector3f &mag, bool reset_heading)
 		// use expected earth field to reset states
 
 		// mag_I: reset, skipped if negligible change in state
-		const Vector3f mag_I = _wmm_earth_field_gauss;
+		Vector3f mag_I = _wmm_earth_field_gauss;
+
+		if ((_params.mag_declination_source == 0) && PX4_ISFINITE(_params.mag_declination_deg)) {
+			// Use the manual horizontal direction while retaining WMM strength
+			// and inclination. Do not modify the model used for sensor checks.
+			const float horizontal_strength = Vector2f(mag_I(0), mag_I(1)).norm();
+			const float declination_rad = math::radians(_params.mag_declination_deg);
+			mag_I(0) = horizontal_strength * cosf(declination_rad);
+			mag_I(1) = horizontal_strength * sinf(declination_rad);
+		}
+
 		bool mag_I_reset = false;
 
 		if ((_state.mag_I - mag_I).longerThan(kMagEarthMinGauss)) {
@@ -399,9 +414,9 @@ void Ekf::resetMagStates(const Vector3f &mag, bool reset_heading)
 		// mag_B: reset, skipped if mag_I didn't change
 		if (!reset_heading && _control_status.flags.yaw_align) {
 			if (mag_I_reset) {
-				// mag_B: reset using WMM
+				// mag_B: use the same earth field as the mag_I reset above.
 				const Dcmf R_to_body = quatToInverseRotMat(_state.quat_nominal);
-				_state.mag_B = mag - (R_to_body * _wmm_earth_field_gauss);
+				_state.mag_B = mag - (R_to_body * mag_I);
 				resetMagBiasCov();
 			} // otherwise keep existing mag_B state (!mag_I_reset)
 
@@ -599,6 +614,12 @@ void Ekf::resetMagHeading(const Vector3f &mag)
 
 float Ekf::getMagDeclination()
 {
+	// Explicit manual mode must also survive in-flight magnetic-state resets.
+	// Automatic modes retain their existing learned/model/saved precedence.
+	if ((_params.mag_declination_source == 0) && PX4_ISFINITE(_params.mag_declination_deg)) {
+		return math::radians(_params.mag_declination_deg);
+	}
+
 	// set source of magnetic declination for internal use
 	if (_control_status.flags.mag_aligned_in_flight) {
 		// Use value consistent with earth field state
